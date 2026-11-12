@@ -9,6 +9,13 @@ body {
     overflow: hidden;
     height: 100vh;
     font-family: 'Segoe UI', Arial, sans-serif;
+    overscroll-behavior: none;      /* no pull-to-refresh on phones */
+}
+
+/* grabbing hand while the cube is being dragged */
+body.dragging,
+body.dragging * {
+    cursor: grabbing;
 }
 
 #cube-container {
@@ -19,15 +26,15 @@ body {
     height: 100%;
 }
 
+/* width and height of a face are set from cube.js (so it can fit small screens) */
 .cube-face {
-    width: 500px;
-    height: 500px;
     background-color: #ffffff;
     color: #333333;
     overflow-y: auto;
     backface-visibility: hidden;
     border: 2px solid #1565C0;
     font-family: 'Segoe UI', Arial, sans-serif;
+    cursor: grab;
 }
 
 .cube-face::-webkit-scrollbar {
@@ -44,6 +51,8 @@ body {
     color: white;
     padding: 10px 14px;
     display: flex;
+    flex-wrap: wrap;                /* links go to the next line on small faces */
+    gap: 6px 10px;
     align-items: center;
     justify-content: space-between;
 }
@@ -55,19 +64,29 @@ body {
 
 .navbar .nav-links {
     display: flex;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 4px 10px;
     list-style: none;
 }
 
 .navbar .nav-links a {
     color: rgba(255, 255, 255, 0.85);
     text-decoration: none;
-    font-size: 10px;
+    font-size: 11px;
+    padding: 3px 0;                 /* a bigger area to tap on phones */
+    display: inline-block;
 }
 
 .navbar .nav-links a:hover {
     color: white;
     text-decoration: underline;
+}
+
+/* link of the face which is open right now */
+.navbar .nav-links a.active {
+    color: white;
+    font-weight: bold;
+    border-bottom: 2px solid white;
 }
 
 .hero-section {

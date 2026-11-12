@@ -1,14 +1,28 @@
-const CUBE_SIZE = 500;
-const HALF = CUBE_SIZE / 2;
+// =====================
+// Settings and variables
+// =====================
+
+let CUBE_SIZE = 500;            // size of one face in px (becomes smaller on small screens)
+let HALF = CUBE_SIZE / 2;
 
 let isDragging = false;
 let prevMouse = { x: 0, y: 0 };
 let velocity = { x: 0, y: 0 };
 
+let isSnapping = false;         // true while the cube is turning to a face after a navbar click
+const targetQuaternion = new THREE.Quaternion();   // the rotation where the cube should stop
+
+let zoom = 0;                   // how much the mouse wheel moved the camera
+
+// Touch variables (see the touch part in setupEvents)
+let touchMode = null;           // 'rotate', 'scroll' or null (not decided yet)
+let touchStart = { x: 0, y: 0 };
+let touchOnScrollableFace = false;
+
 const scene = new THREE.Scene();
 
+// The camera distance is set later in updateCameraDistance()
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
-camera.position.z = 1200;
 
 const renderer = new THREE.CSS3DRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -17,19 +31,46 @@ document.getElementById('cube-container').appendChild(renderer.domElement);
 const cubeGroup = new THREE.Group();
 scene.add(cubeGroup);
 
-const navbarHTML = `
-    <div class="navbar">
+
+// =====================
+// Navbar (same on every face)
+// =====================
+
+// "face" must match the face names in setupCubeFaces()
+const navItems = [
+    { face: 'home',       label: 'Home' },
+    { face: 'education',  label: 'Education' },
+    { face: 'skills',     label: 'Skills' },
+    { face: 'projects',   label: 'Projects' },
+    { face: 'activities', label: 'Activities' },
+    { face: 'contact',    label: 'Contact' }
+];
+
+// activeFace = the face on which this navbar is shown (its link gets highlighted)
+function getNavbarHTML(activeFace) {
+    let linksHTML = '';
+
+    navItems.forEach(function(item) {
+        const activeClass = (item.face === activeFace) ? ' class="active"' : '';
+        linksHTML += '<li><a href="#" data-face="' + item.face + '"' + activeClass + '>' + item.label + '</a></li>';
+    });
+
+    return `
+    <nav class="navbar">
         <span class="site-name">Abhishek Saini</span>
         <ul class="nav-links">
-            <li><a href="#">About</a></li>
-            <li><a href="#">Skills</a></li>
-            <li><a href="#">Projects</a></li>
-            <li><a href="#">Contact</a></li>
+            ${linksHTML}
         </ul>
-    </div>`;
+    </nav>`;
+}
+
+
+// =====================
+// Content of the faces
+// =====================
 
 function getHomeHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('home') + `
     <div class="hero-section">
         <img
             src="https://github.com/AbhiDream.png"
@@ -56,7 +97,7 @@ function getHomeHTML() {
 }
 
 function getEducationHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('education') + `
     <div class="section">
         <h2><span class="material-icons">school</span> Academic Details</h2>
         <table class="edu-table">
@@ -81,29 +122,11 @@ function getEducationHTML() {
                 <td>94%</td>
             </tr>
         </table>
-    </div>
-    <div class="section">
-        <h2><span class="material-icons">groups</span> Societies &amp; Activities</h2>
-        <div class="card">
-            <h3>Technical Society - IIIT Sonepat</h3>
-            <p><b>Role:</b> Technical Team Core Member</p>
-            <p>Organizing technical events, hackathons, and coding competitions.
-               Volunteered in Codathon and Hackathon.</p>
-        </div>
-        <div class="card">
-            <h3>Impact Club - IIIT Sonepat</h3>
-            <p><b>Role:</b> Social Media Manager</p>
-            <p>Creating content and managing club's social media presence.</p>
-        </div>
-        <div class="card">
-            <h3>Team Lead | Smart India Hackathon 2026</h3>
-            <p>Led a team at SIH 2026 (Govt. of India). Built a working prototype and won the hackathon.</p>
-        </div>
     </div>`;
 }
 
 function getSkillsHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('skills') + `
     <div class="section">
         <h2><span class="material-icons">code</span> Skills</h2>
 
@@ -111,6 +134,10 @@ function getSkillsHTML() {
         <div>
             <span class="skill-tag">HTML</span>
             <span class="skill-tag">CSS</span>
+            <span class="skill-tag">JavaScript</span>
+            <span class="skill-tag">Node.js</span>
+            <span class="skill-tag">Express</span>
+            <span class="skill-tag">Python</span>
             <span class="skill-tag">C Programming</span>
         </div>
 
@@ -143,7 +170,7 @@ function getSkillsHTML() {
 }
 
 function getProjectsHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('projects') + `
     <div class="section">
         <h2><span class="material-icons">folder</span> My Projects</h2>
 
@@ -188,23 +215,14 @@ function getProjectsHTML() {
                 <a href="https://github.com/AbhiDream/melodify-app" target="_blank">View on GitHub &rarr;</a>
             </p>
         </div>
-
-        <div class="card">
-            <h3>3. Freelance Video Editing</h3>
-            <p>In class 11th I did freelancing - edited podcasts for a client from Mumbai.</p>
-        </div>
     </div>`;
 }
 
 function getContactHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('contact') + `
     <div class="section">
         <h2><span class="material-icons">email</span> Contact Me</h2>
 
-        <div class="contact-row">
-            <span class="material-icons">phone</span>
-            <span>+91 6396612008</span>
-        </div>
         <div class="contact-row">
             <span class="material-icons">email</span>
             <a href="mailto:abhidream04@gmail.com">abhidream04@gmail.com</a>
@@ -231,7 +249,7 @@ function getContactHTML() {
 }
 
 function getActivitiesHTML() {
-    return navbarHTML + `
+    return getNavbarHTML('activities') + `
     <div class="section">
         <h2><span class="material-icons">groups</span> Societies and Activities</h2>
         <p>I am a core member of two societies in my college.</p>
@@ -270,6 +288,9 @@ function getActivitiesHTML() {
 // Building the Cube
 // =====================
 
+// Every face is saved here (name, html element, 3D object, direction, rotation)
+const cubeFaces = [];
+
 function createFaceElement(htmlContent) {
     const div = document.createElement('div');
     div.className = 'cube-face';
@@ -278,33 +299,115 @@ function createFaceElement(htmlContent) {
 }
 
 function setupCubeFaces() {
-    const faces = [
-        { html: getHomeHTML(),       position: [0, 0, HALF],  rotation: [0, 0, 0] },
-        { html: getContactHTML(),    position: [0, 0, -HALF], rotation: [0, Math.PI, 0] },
-        { html: getEducationHTML(),  position: [HALF, 0, 0],  rotation: [0, Math.PI / 2, 0] },
-        { html: getSkillsHTML(),     position: [-HALF, 0, 0], rotation: [0, -Math.PI / 2, 0] },
-        { html: getProjectsHTML(),   position: [0, HALF, 0],  rotation: [-Math.PI / 2, 0, 0] },
-        { html: getActivitiesHTML(), position: [0, -HALF, 0], rotation: [Math.PI / 2, 0, 0] }
+    // direction = on which side of the cube the face sits (x, y, z)
+    // rotation  = turns the face so that it looks outside
+    const faceData = [
+        { name: 'home',       html: getHomeHTML(),       direction: [0, 0, 1],  rotation: [0, 0, 0] },
+        { name: 'contact',    html: getContactHTML(),    direction: [0, 0, -1], rotation: [0, Math.PI, 0] },
+        { name: 'education',  html: getEducationHTML(),  direction: [1, 0, 0],  rotation: [0, Math.PI / 2, 0] },
+        { name: 'skills',     html: getSkillsHTML(),     direction: [-1, 0, 0], rotation: [0, -Math.PI / 2, 0] },
+        { name: 'projects',   html: getProjectsHTML(),   direction: [0, 1, 0],  rotation: [-Math.PI / 2, 0, 0] },
+        { name: 'activities', html: getActivitiesHTML(), direction: [0, -1, 0], rotation: [Math.PI / 2, 0, 0] }
     ];
 
-    faces.forEach(function(face) {
-        const element = createFaceElement(face.html);
+    faceData.forEach(function(data) {
+        const element = createFaceElement(data.html);
         const cssObject = new THREE.CSS3DObject(element);
-        cssObject.position.set(face.position[0], face.position[1], face.position[2]);
-        cssObject.rotation.set(face.rotation[0], face.rotation[1], face.rotation[2]);
+        cssObject.rotation.set(data.rotation[0], data.rotation[1], data.rotation[2]);
         cubeGroup.add(cssObject);
+
+        cubeFaces.push({
+            name: data.name,
+            element: element,
+            cssObject: cssObject,
+            direction: data.direction,
+            rotation: data.rotation
+        });
     });
+
+    updateCubeSize();
 }
 
+// Sets the size and the position of every face.
+// Called once at the start and again whenever the window is resized.
+function updateCubeSize() {
+    // 500px on big screens, smaller on phones so that the cube fits the screen
+    CUBE_SIZE = Math.min(500, window.innerWidth - 40, window.innerHeight - 100);
+    CUBE_SIZE = Math.max(CUBE_SIZE, 260);   // but not too small
+    HALF = CUBE_SIZE / 2;
+
+    cubeFaces.forEach(function(face) {
+        face.element.style.width = CUBE_SIZE + 'px';
+        face.element.style.height = CUBE_SIZE + 'px';
+        face.cssObject.position.set(
+            face.direction[0] * HALF,
+            face.direction[1] * HALF,
+            face.direction[2] * HALF
+        );
+    });
+
+    updateCameraDistance();
+}
+
+// If the camera is at this distance, the front face is shown in its real size
+// (so 11px text really looks like 11px, on every screen).
+// The camera angle is 45 degree, so half of it is 22.5 degree.
+function updateCameraDistance() {
+    const halfAngle = 22.5 * Math.PI / 180;
+    const idealDistance = (window.innerHeight / 2) / Math.tan(halfAngle);
+    camera.position.z = idealDistance + HALF + zoom;
+}
+
+
+// =====================
+// Rotating the cube
+// =====================
+
+const xAxis = new THREE.Vector3(1, 0, 0);
+const yAxis = new THREE.Vector3(0, 1, 0);
+
+// Rotates around the screen's axes, so dragging always feels natural
+// (even when the cube is upside down)
+function rotateCube(aroundY, aroundX) {
+    cubeGroup.rotateOnWorldAxis(yAxis, aroundY);
+    cubeGroup.rotateOnWorldAxis(xAxis, aroundX);
+}
+
+// Turns the cube so that the given face comes in front (used by the navbar)
+function goToFace(faceName) {
+    const face = cubeFaces.find(function(f) {
+        return f.name === faceName;
+    });
+    if (!face) return;
+
+    // To bring a face in front, the cube must turn opposite to that face's rotation
+    const euler = new THREE.Euler(-face.rotation[0], -face.rotation[1], -face.rotation[2]);
+    targetQuaternion.setFromEuler(euler);
+
+    velocity = { x: 0, y: 0 };
+    isSnapping = true;
+}
+
+
+// =====================
+// Mouse and touch events
+// =====================
+
 const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
+
+function startDrag(x, y) {
+    isDragging = true;
+    isSnapping = false;     // stop the navbar animation if it is running
+    prevMouse = { x: x, y: y };
+    velocity = { x: 0, y: 0 };
+    document.body.classList.add('dragging');
+}
 
 function onDragStart(x, y, target) {
     if (interactiveTags.includes(target.tagName) || (target.closest && target.closest('a, button'))) {
         return;
     }
-    isDragging = true;
-    prevMouse = { x: x, y: y };
-    velocity = { x: 0, y: 0 };
+    startDrag(x, y);
 }
 
 function onDragMove(x, y) {
@@ -313,16 +416,17 @@ function onDragMove(x, y) {
     const deltaY = y - prevMouse.y;
     velocity.y = deltaX * 0.006;
     velocity.x = deltaY * 0.006;
-    cubeGroup.rotation.y += velocity.y;
-    cubeGroup.rotation.x += velocity.x;
+    rotateCube(velocity.y, velocity.x);
     prevMouse = { x: x, y: y };
 }
 
 function onDragEnd() {
     isDragging = false;
+    document.body.classList.remove('dragging');
 }
 
 function setupEvents() {
+    // ----- Mouse -----
     window.addEventListener('mousedown', function(e) {
         onDragStart(e.clientX, e.clientY, e.target);
     });
@@ -333,27 +437,78 @@ function setupEvents() {
 
     window.addEventListener('mouseup', onDragEnd);
 
+    // ----- Touch -----
+    // On a phone one finger can do two things: scroll the text inside a face,
+    // or rotate the cube. So we wait for the first small movement and decide:
+    //   - up/down swipe on a face that has more text  -> scroll the face
+    //   - anything else (side swipe, or outside faces) -> rotate the cube
     window.addEventListener('touchstart', function(e) {
-        onDragStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+        const touch = e.touches[0];
+        const face = e.target.closest('.cube-face');
+
+        touchStart = { x: touch.clientX, y: touch.clientY };
+        touchOnScrollableFace = (face !== null) && (face.scrollHeight > face.clientHeight);
+        touchMode = null;
     }, { passive: true });
 
     window.addEventListener('touchmove', function(e) {
-        e.preventDefault();
-        onDragMove(e.touches[0].clientX, e.touches[0].clientY);
+        const touch = e.touches[0];
+
+        if (touchMode === null) {
+            const moveX = Math.abs(touch.clientX - touchStart.x);
+            const moveY = Math.abs(touch.clientY - touchStart.y);
+
+            if (moveX < 6 && moveY < 6) return;   // moved very little, decide later
+
+            if (touchOnScrollableFace && moveY > moveX) {
+                touchMode = 'scroll';
+            } else {
+                touchMode = 'rotate';
+                startDrag(touchStart.x, touchStart.y);
+            }
+        }
+
+        if (touchMode === 'rotate') {
+            e.preventDefault();   // stops the page from scrolling while the cube rotates
+            onDragMove(touch.clientX, touch.clientY);
+        }
+        // in 'scroll' mode we do nothing, the browser scrolls the face by itself
     }, { passive: false });
 
-    window.addEventListener('touchend', onDragEnd);
+    window.addEventListener('touchend', function() {
+        onDragEnd();
+        touchMode = null;
+    });
 
+    window.addEventListener('touchcancel', function() {
+        onDragEnd();
+        touchMode = null;
+    });
+
+    // ----- Navbar links -----
+    // One listener for all links, so it also works for links inside every face
+    document.addEventListener('click', function(e) {
+        const link = e.target.closest('[data-face]');
+        if (link) {
+            e.preventDefault();
+            goToFace(link.dataset.face);
+        }
+    });
+
+    // ----- Mouse wheel (zoom) -----
     window.addEventListener('wheel', function(e) {
         if (e.target.closest && e.target.closest('.cube-face')) return;
-        camera.position.z += e.deltaY * 1.2;
-        camera.position.z = Math.max(600, Math.min(2500, camera.position.z));
+        zoom += e.deltaY * 1.2;
+        zoom = Math.max(-300, Math.min(1000, zoom));
+        updateCameraDistance();
     }, { passive: true });
 
+    // ----- Window resize -----
     window.addEventListener('resize', function() {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        updateCubeSize();
     });
 }
 
@@ -365,13 +520,21 @@ function setupEvents() {
 function animate() {
     requestAnimationFrame(animate);
 
-    if (!isDragging) {
+    if (isSnapping) {
+        // slerp = move a little bit from the current rotation towards the target rotation
+        cubeGroup.quaternion.slerp(targetQuaternion, 0.12);
+
+        // close enough, so stop and fix it exactly on the target
+        if (cubeGroup.quaternion.angleTo(targetQuaternion) < 0.002) {
+            cubeGroup.quaternion.copy(targetQuaternion);
+            isSnapping = false;
+        }
+    } else if (!isDragging) {
         velocity.x *= 0.88;
         velocity.y *= 0.88;
 
         if (Math.abs(velocity.x) > 0.0001 || Math.abs(velocity.y) > 0.0001) {
-            cubeGroup.rotation.x += velocity.x;
-            cubeGroup.rotation.y += velocity.y;
+            rotateCube(velocity.y, velocity.x);
         }
     }
 
