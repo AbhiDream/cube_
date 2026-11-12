@@ -10,14 +10,10 @@ let prevMouse = { x: 0, y: 0 };
 let velocity = { x: 0, y: 0 };
 
 let isSnapping = false;         // true while the cube is turning to a face after a navbar click
-const targetQuaternion = new THREE.Quaternion();   // the rotation where the cube should stop
+let targetRotation = { x: 0, y: 0 };   // the rotation where the cube should stop
 
 let zoom = 0;                   // how much the mouse wheel moved the camera
-
-// Touch variables (see the touch part in setupEvents)
-let touchMode = null;           // 'rotate', 'scroll' or null (not decided yet)
-let touchStart = { x: 0, y: 0 };
-let touchOnScrollableFace = false;
+let touchedFace = null;         // the face under the finger (null = finger is on the dark background)
 
 const scene = new THREE.Scene();
 
@@ -51,8 +47,9 @@ function getNavbarHTML(activeFace) {
     let linksHTML = '';
 
     navItems.forEach(function(item) {
-        const activeClass = (item.face === activeFace) ? ' class="active"' : '';
-        linksHTML += '<li><a href="#" data-face="' + item.face + '"' + activeClass + '>' + item.label + '</a></li>';
+        const activeClass = (item.face === activeFace) ? 'active' : '';
+        // onclick turns the cube to that face, "return false" stops the page from jumping to the top
+        linksHTML += `<li><a href="#" class="${activeClass}" onclick="goToFace('${item.face}'); return false;">${item.label}</a></li>`;
     });
 
     return `
@@ -349,40 +346,26 @@ function updateCubeSize() {
     updateCameraDistance();
 }
 
-// If the camera is at this distance, the front face is shown in its real size
-// (so 11px text really looks like 11px, on every screen).
-// The camera angle is 45 degree, so half of it is 22.5 degree.
+// The camera goes far or near according to the screen height,
+// so the front face always looks in its real size (1.2 is a number I found by trying).
 function updateCameraDistance() {
-    const halfAngle = 22.5 * Math.PI / 180;
-    const idealDistance = (window.innerHeight / 2) / Math.tan(halfAngle);
-    camera.position.z = idealDistance + HALF + zoom;
+    camera.position.z = window.innerHeight * 1.2 + HALF + zoom;
 }
 
 
 // =====================
-// Rotating the cube
+// Turning the cube to a face (navbar)
 // =====================
 
-const xAxis = new THREE.Vector3(1, 0, 0);
-const yAxis = new THREE.Vector3(0, 1, 0);
-
-// Rotates around the screen's axes, so dragging always feels natural
-// (even when the cube is upside down)
-function rotateCube(aroundY, aroundX) {
-    cubeGroup.rotateOnWorldAxis(yAxis, aroundY);
-    cubeGroup.rotateOnWorldAxis(xAxis, aroundX);
-}
-
-// Turns the cube so that the given face comes in front (used by the navbar)
 function goToFace(faceName) {
     const face = cubeFaces.find(function(f) {
         return f.name === faceName;
     });
     if (!face) return;
 
-    // To bring a face in front, the cube must turn opposite to that face's rotation
-    const euler = new THREE.Euler(-face.rotation[0], -face.rotation[1], -face.rotation[2]);
-    targetQuaternion.setFromEuler(euler);
+    // To bring a face in front, the cube must turn opposite to the rotation of that face
+    targetRotation.x = -face.rotation[0];
+    targetRotation.y = -face.rotation[1];
 
     velocity = { x: 0, y: 0 };
     isSnapping = true;
@@ -395,19 +378,15 @@ function goToFace(faceName) {
 
 const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
 
-function startDrag(x, y) {
+function onDragStart(x, y, target) {
+    if (interactiveTags.includes(target.tagName) || (target.closest && target.closest('a, button'))) {
+        return;
+    }
     isDragging = true;
     isSnapping = false;     // stop the navbar animation if it is running
     prevMouse = { x: x, y: y };
     velocity = { x: 0, y: 0 };
     document.body.classList.add('dragging');
-}
-
-function onDragStart(x, y, target) {
-    if (interactiveTags.includes(target.tagName) || (target.closest && target.closest('a, button'))) {
-        return;
-    }
-    startDrag(x, y);
 }
 
 function onDragMove(x, y) {
@@ -416,7 +395,8 @@ function onDragMove(x, y) {
     const deltaY = y - prevMouse.y;
     velocity.y = deltaX * 0.006;
     velocity.x = deltaY * 0.006;
-    rotateCube(velocity.y, velocity.x);
+    cubeGroup.rotation.y += velocity.y;
+    cubeGroup.rotation.x += velocity.x;
     prevMouse = { x: x, y: y };
 }
 
@@ -437,63 +417,36 @@ function setupEvents() {
 
     window.addEventListener('mouseup', onDragEnd);
 
-    // ----- Touch -----
-    // On a phone one finger can do two things: scroll the text inside a face,
-    // or rotate the cube. So we wait for the first small movement and decide:
-    //   - up/down swipe on a face that has more text  -> scroll the face
-    //   - anything else (side swipe, or outside faces) -> rotate the cube
+    // ----- Touch (phone) -----
+    // finger on a face            -> scroll the text of that face
+    // finger on the dark background -> rotate the cube
+    // (to change the face on a phone, use the navbar)
     window.addEventListener('touchstart', function(e) {
-        const touch = e.touches[0];
-        const face = e.target.closest('.cube-face');
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
 
-        touchStart = { x: touch.clientX, y: touch.clientY };
-        touchOnScrollableFace = (face !== null) && (face.scrollHeight > face.clientHeight);
-        touchMode = null;
+        touchedFace = e.target.closest('.cube-face');
+        prevMouse = { x: x, y: y };
+
+        if (touchedFace === null) {
+            onDragStart(x, y, e.target);
+        }
     }, { passive: true });
 
     window.addEventListener('touchmove', function(e) {
-        const touch = e.touches[0];
+        e.preventDefault();     // the page itself should not scroll
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
 
-        if (touchMode === null) {
-            const moveX = Math.abs(touch.clientX - touchStart.x);
-            const moveY = Math.abs(touch.clientY - touchStart.y);
-
-            if (moveX < 6 && moveY < 6) return;   // moved very little, decide later
-
-            if (touchOnScrollableFace && moveY > moveX) {
-                touchMode = 'scroll';
-            } else {
-                touchMode = 'rotate';
-                startDrag(touchStart.x, touchStart.y);
-            }
+        if (touchedFace !== null) {
+            touchedFace.scrollTop -= (y - prevMouse.y);   // finger goes up -> text goes up
+            prevMouse = { x: x, y: y };
+        } else {
+            onDragMove(x, y);
         }
-
-        if (touchMode === 'rotate') {
-            e.preventDefault();   // stops the page from scrolling while the cube rotates
-            onDragMove(touch.clientX, touch.clientY);
-        }
-        // in 'scroll' mode we do nothing, the browser scrolls the face by itself
     }, { passive: false });
 
-    window.addEventListener('touchend', function() {
-        onDragEnd();
-        touchMode = null;
-    });
-
-    window.addEventListener('touchcancel', function() {
-        onDragEnd();
-        touchMode = null;
-    });
-
-    // ----- Navbar links -----
-    // One listener for all links, so it also works for links inside every face
-    document.addEventListener('click', function(e) {
-        const link = e.target.closest('[data-face]');
-        if (link) {
-            e.preventDefault();
-            goToFace(link.dataset.face);
-        }
-    });
+    window.addEventListener('touchend', onDragEnd);
 
     // ----- Mouse wheel (zoom) -----
     window.addEventListener('wheel', function(e) {
@@ -521,12 +474,17 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (isSnapping) {
-        // slerp = move a little bit from the current rotation towards the target rotation
-        cubeGroup.quaternion.slerp(targetQuaternion, 0.12);
+        // every frame move 10% of the remaining distance (starts fast, ends slowly)
+        cubeGroup.rotation.x += (targetRotation.x - cubeGroup.rotation.x) * 0.1;
+        cubeGroup.rotation.y += (targetRotation.y - cubeGroup.rotation.y) * 0.1;
+
+        const diffX = Math.abs(targetRotation.x - cubeGroup.rotation.x);
+        const diffY = Math.abs(targetRotation.y - cubeGroup.rotation.y);
 
         // close enough, so stop and fix it exactly on the target
-        if (cubeGroup.quaternion.angleTo(targetQuaternion) < 0.002) {
-            cubeGroup.quaternion.copy(targetQuaternion);
+        if (diffX < 0.001 && diffY < 0.001) {
+            cubeGroup.rotation.x = targetRotation.x;
+            cubeGroup.rotation.y = targetRotation.y;
             isSnapping = false;
         }
     } else if (!isDragging) {
@@ -534,7 +492,8 @@ function animate() {
         velocity.y *= 0.88;
 
         if (Math.abs(velocity.x) > 0.0001 || Math.abs(velocity.y) > 0.0001) {
-            rotateCube(velocity.y, velocity.x);
+            cubeGroup.rotation.x += velocity.x;
+            cubeGroup.rotation.y += velocity.y;
         }
     }
 
